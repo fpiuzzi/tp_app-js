@@ -38,6 +38,10 @@ pipeline {
             # npm ci
           fi
         '''
+        sh '''
+          # Installation explicite de jest-junit
+          npm install --save-dev jest-junit
+        '''
       }
     }
 
@@ -48,7 +52,7 @@ pipeline {
       }
       post {
         always {
-          junit testResults: '**/test-results.xml', allowEmptyResults: true
+          junit testResults: '**/junit.xml', allowEmptyResults: true
         }
       }
     }
