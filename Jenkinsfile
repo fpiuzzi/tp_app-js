@@ -18,13 +18,20 @@ pipeline {
         SLACK_TEAM_DOMAIN = 'ipi-sandbox'
     }
 
-    stages {
-        stage('Checkout') {
-            steps {
-                echo 'Récupération du code source...'
-                checkout scm
-            }
+    stage('Checkout') {
+        steps {
+            echo 'Récupération du code source...'
+            // Nettoyage de l'espace de travail pour éviter les problèmes Git
+            cleanWs()
+            // Checkout explicite du dépôt public
+            checkout([
+                $class: 'GitSCM',
+                branches: [[name: '*/master']],
+                extensions: [[$class: 'CleanBeforeCheckout']],
+                userRemoteConfigs: [[url: 'https://github.com/fpiuzzi/tp_app-js.git']]
+            ])
         }
+    }
 
         stage('Install Dependencies') {
             steps {
