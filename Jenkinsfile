@@ -20,14 +20,7 @@ pipeline {
         stage('Checkout') {
             steps {
                 echo 'Récupération du code source...'
-                // Configuration explicite du checkout avec authentification
-                checkout([$class: 'GitSCM',
-                    branches: [[name: '*/master']],
-                    userRemoteConfigs: [[
-                        url: 'https://github.com/fpiuzzi/tp_app-js.git',
-                        credentialsId: 'github-credentials' // ID des identifiants configurés dans Jenkins
-                    ]]
-                ])
+                checkout scm
             }
         }
 
