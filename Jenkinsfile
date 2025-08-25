@@ -20,7 +20,14 @@ pipeline {
         stage('Checkout') {
             steps {
                 echo 'Récupération du code source...'
-                checkout scm
+                // Configuration explicite du checkout avec authentification
+                checkout([$class: 'GitSCM',
+                    branches: [[name: '*/master']],
+                    userRemoteConfigs: [[
+                        url: 'https://github.com/fpiuzzi/tp_app-js.git',
+                        credentialsId: 'github-credentials' // ID des identifiants configurés dans Jenkins
+                    ]]
+                ])
             }
         }
 
@@ -239,56 +246,64 @@ pipeline {
 
     post {
         always {
-            echo 'Nettoyage des ressources temporaires...'
-            sh '''
-                rm -rf node_modules/.cache
-                rm -rf staging
-            '''
+            node {  // Ajout du bloc node pour résoudre l'erreur de contexte
+                echo 'Nettoyage des ressources temporaires...'
+                sh '''
+                    rm -rf node_modules/.cache || true
+                    rm -rf staging || true
+                '''
+            }
         }
         success {
-            echo 'Pipeline exécuté avec succès!'
-            script {
-                def deploymentInfo = ""
-                if (env.BRANCH_NAME == 'develop') {
-                    deploymentInfo = "Application staging disponible sur: http://[VOTRE_SERVEUR]:3001"
-                } else if (env.BRANCH_NAME == 'main') {
-                    deploymentInfo = "Application production disponible sur: http://[VOTRE_SERVEUR]:3000"
+            node {  // Ajout du bloc node pour résoudre l'erreur de contexte
+                echo 'Pipeline exécuté avec succès!'
+                script {
+                    def deploymentInfo = ""
+                    if (env.BRANCH_NAME == 'develop') {
+                        deploymentInfo = "Application staging disponible sur: http://[VOTRE_SERVEUR]:3001"
+                    } else if (env.BRANCH_NAME == 'master') {
+                        deploymentInfo = "Application production disponible sur: http://[VOTRE_SERVEUR]:3000"
+                    }
+
+                    emailext (
+                        subject: "Build Success: ${env.JOB_NAME} - ${env.BUILD_NUMBER}",
+                        body: """
+                            Le déploiement de ${env.JOB_NAME} s'est terminé avec succès.
+
+                            Build: ${env.BUILD_NUMBER}
+                            Branch: ${env.BRANCH_NAME}
+                            Docker Image: ${env.DOCKER_VERSIONED}
+
+                            ${deploymentInfo}
+
+                            Voir les détails: ${env.BUILD_URL}
+                        """,
+                        to: "${env.CHANGE_AUTHOR_EMAIL ?: 'votre@email.com'}"
+                    )
                 }
-
-                emailext (
-                    subject: "Build Success: ${env.JOB_NAME} - ${env.BUILD_NUMBER}",
-                    body: """
-                        Le déploiement de ${env.JOB_NAME} s'est terminé avec succès.
-
-                        Build: ${env.BUILD_NUMBER}
-                        Branch: ${env.BRANCH_NAME}
-                        Docker Image: ${env.DOCKER_VERSIONED}
-
-                        ${deploymentInfo}
-
-                        Voir les détails: ${env.BUILD_URL}
-                    """,
-                    to: "${env.CHANGE_AUTHOR_EMAIL}"
-                )
             }
         }
         failure {
-            echo 'Le pipeline a échoué!'
-            emailext (
-                subject: "Build Failed: ${env.JOB_NAME} - ${env.BUILD_NUMBER}",
-                body: """
-                    Le déploiement de ${env.JOB_NAME} a échoué.
+            node {  // Ajout du bloc node pour résoudre l'erreur de contexte
+                echo 'Le pipeline a échoué!'
+                emailext (
+                    subject: "Build Failed: ${env.JOB_NAME} - ${env.BUILD_NUMBER}",
+                    body: """
+                        Le déploiement de ${env.JOB_NAME} a échoué.
 
-                    Build: ${env.BUILD_NUMBER}
-                    Branch: ${env.BRANCH_NAME}
+                        Build: ${env.BUILD_NUMBER}
+                        Branch: ${env.BRANCH_NAME}
 
-                    Voir les détails: ${env.BUILD_URL}
-                """,
-                to: "${env.CHANGE_AUTHOR_EMAIL}"
-            )
+                        Voir les détails: ${env.BUILD_URL}
+                    """,
+                    to: "${env.CHANGE_AUTHOR_EMAIL ?: 'votre@email.com'}"
+                )
+            }
         }
         unstable {
-            echo 'Build instable - des avertissements ont été détectés'
+            node {  // Ajout du bloc node pour résoudre l'erreur de contexte
+                echo 'Build instable - des avertissements ont été détectés'
+            }
         }
     }
 }
