@@ -85,9 +85,6 @@ pipeline {
                 echo 'Construction de l\'image Docker...'
                 script {
                     try {
-                        // Résoudre le problème de permissions
-                        sh 'sudo chmod 666 /var/run/docker.sock || true'
-
                         // Créer le Dockerfile dynamiquement
                         writeFile file: 'Dockerfile', text: '''
         FROM node:18-alpine
@@ -100,7 +97,13 @@ pipeline {
         EXPOSE 3000
         CMD ["node", "dist/index.js"]
         '''
-                        sh 'docker build -t ${DOCKER_VERSIONED} . && docker tag ${DOCKER_VERSIONED} ${DOCKER_LATEST}'
+                        // Solution sans sudo - utilisation d'un conteneur avec les bonnes permissions
+                        docker.image('docker:latest').inside('-v /var/run/docker.sock:/var/run/docker.sock') {
+                            sh 'docker build -t ${DOCKER_VERSIONED} . && docker tag ${DOCKER_VERSIONED} ${DOCKER_LATEST}'
+                        }
+
+                        // Vérification de l'image créée
+                        sh 'docker images | grep ${DOCKER_IMAGE}'
                     } catch (Exception e) {
                         currentBuild.result = 'FAILURE'
                         error "Échec de la construction Docker: ${e.getMessage()}"
