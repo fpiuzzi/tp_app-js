@@ -32,6 +32,7 @@ pipeline {
                     node --version
                     npm --version
                     npm ci
+                    npm install --save-dev jest-junit
                 '''
             }
         }
@@ -84,7 +85,7 @@ pipeline {
                 echo 'Construction de l\'image Docker...'
                 script {
                     try {
-                        // Construction de l'image Docker
+
                         sh '''
                             echo "Construction de l'image Docker..."
                             docker build -t ${DOCKER_VERSIONED} .
@@ -134,7 +135,7 @@ pipeline {
 
         stage('Deploy to Production') {
             when {
-                branch 'main'
+                branch 'master'
             }
             steps {
                 echo 'Déploiement vers la production...'
