@@ -14,8 +14,7 @@ pipeline {
     APP_NAME   = 'mon-app-js'
     DEPLOY_DIR = '/var/www/html/mon-app'
     CI         = 'true'
-    // Facultatif: destinataires par défaut si CHANGE_AUTHOR_EMAIL est vide
-    DEFAULT_RECIPIENTS = 'devops@example.com'
+    DEFAULT_RECIPIENTS = 'florent.piuzzi@edu.igensia.com'
   }
 
   stages {
@@ -55,7 +54,6 @@ pipeline {
       }
       post {
         always {
-          // Publie les rapports JUnit si présents (ex: via jest-junit)
           junit testResults: '**/test-results.xml', allowEmptyResults: true
         }
       }
