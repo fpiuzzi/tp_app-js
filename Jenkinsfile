@@ -5,15 +5,9 @@ pipeline {
     nodejs 'node18'
   }
 
-  options {
-    skipDefaultCheckout(true)
-    timestamps()
-  }
-
   environment {
     APP_NAME   = 'mon-app-js'
     DEPLOY_DIR = '/var/www/html/mon-app'
-    CI         = 'true'
     DEFAULT_RECIPIENTS = 'florent.piuzzi@edu.igensia.com'
   }
 
@@ -29,7 +23,7 @@ pipeline {
       steps {
         echo 'Installation des dépendances Node.js...'
         sh '''
-          set -euxo pipefail
+          set -eux
           node --version
           npm --version
 
