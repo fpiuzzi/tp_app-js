@@ -85,15 +85,20 @@ pipeline {
                 echo 'Construction de l\'image Docker...'
                 script {
                     try {
-
-                        sh '''
-                            echo "Construction de l'image Docker..."
-                            docker build -t ${DOCKER_VERSIONED} .
-                            docker tag ${DOCKER_VERSIONED} ${DOCKER_LATEST}
-
-                            echo "Images Docker créées:"
-                            docker images | grep ${DOCKER_IMAGE}
-                        '''
+                        // Créer le Dockerfile dynamiquement
+                        writeFile file: 'Dockerfile', text: '''
+        FROM node:18-alpine
+        WORKDIR /app
+        COPY package*.json ./
+        RUN npm ci
+        COPY . .
+        RUN npm run build
+        RUN npm prune --production
+        EXPOSE 3000
+        CMD ["node", "dist/index.js"]
+        '''
+                        sh 'docker build -t ${DOCKER_VERSIONED} . && docker tag ${DOCKER_VERSIONED} ${DOCKER_LATEST}'
+                        sh 'echo "Images Docker créées:" && docker images | grep ${DOCKER_IMAGE}'
                     } catch (Exception e) {
                         currentBuild.result = 'FAILURE'
                         error "Échec de la construction Docker: ${e.getMessage()}"
