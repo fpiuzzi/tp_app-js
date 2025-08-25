@@ -85,6 +85,9 @@ pipeline {
                 echo 'Construction de l\'image Docker...'
                 script {
                     try {
+                        // Résoudre le problème de permissions
+                        sh 'sudo chmod 666 /var/run/docker.sock || true'
+
                         // Créer le Dockerfile dynamiquement
                         writeFile file: 'Dockerfile', text: '''
         FROM node:18-alpine
@@ -98,7 +101,6 @@ pipeline {
         CMD ["node", "dist/index.js"]
         '''
                         sh 'docker build -t ${DOCKER_VERSIONED} . && docker tag ${DOCKER_VERSIONED} ${DOCKER_LATEST}'
-                        sh 'echo "Images Docker créées:" && docker images | grep ${DOCKER_IMAGE}'
                     } catch (Exception e) {
                         currentBuild.result = 'FAILURE'
                         error "Échec de la construction Docker: ${e.getMessage()}"
