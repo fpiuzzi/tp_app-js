@@ -14,13 +14,15 @@ pipeline {
         DOCKER_LATEST = "${DOCKER_IMAGE}:latest"
         DOCKER_VERSIONED = "${DOCKER_IMAGE}:${DOCKER_TAG}"
         CONTAINER_NAME = 'mon-app-js-container'
+        SLACK_CHANNEL = '#deployments'
+        SLACK_TEAM_DOMAIN = 'ipi-sandbox'
     }
 
     stages {
         stage('Checkout') {
             steps {
-               echo 'Récupération du code source...'
-               checkout scm
+                echo 'Récupération du code source...'
+                checkout scm
             }
         }
 
@@ -32,7 +34,6 @@ pipeline {
                     node --version
                     npm --version
                     npm ci
-                    npm install --save-dev jest-junit
                 '''
             }
         }
@@ -84,27 +85,65 @@ pipeline {
             steps {
                 echo 'Construction de l\'image Docker...'
                 script {
-                    writeFile file: 'Dockerfile', text: '''
-FROM node:18-alpine
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci
-COPY . .
-RUN npm run build
-RUN npm prune --production
-EXPOSE 3000
-CMD ["node", "dist/index.js"]
-'''
-                    sh 'docker build -t ${DOCKER_VERSIONED} . && docker tag ${DOCKER_VERSIONED} ${DOCKER_LATEST}'
+                    try {
+                        slackSend(
+                            channel: env.SLACK_CHANNEL,
+                            teamDomain: env.SLACK_TEAM_DOMAIN,
+                            color: 'warning',
+                            message: ":building_construction: *${env.APP_NAME}* - Construction de l'image Docker en cours...\n" +
+                                    "Build: #${env.BUILD_NUMBER} | Branch: ${env.BRANCH_NAME}\n" +
+                                    "Commit: ${env.GIT_COMMIT?.take(8)}"
+                        )
+
+                        sh '''
+                            echo "Construction de l'image Docker..."
+                            docker build -t ${DOCKER_VERSIONED} .
+                            docker tag ${DOCKER_VERSIONED} ${DOCKER_LATEST}
+
+                            echo "Images Docker créées:"
+                            docker images | grep ${DOCKER_IMAGE}
+                        '''
+
+                        // Notification de succès du build Docker
+                        slackSend(
+                            channel: env.SLACK_CHANNEL,
+                            teamDomain: env.SLACK_TEAM_DOMAIN,
+                            color: 'good',
+                            message: ":white_check_mark: Image Docker construite avec succès: `${env.DOCKER_VERSIONED}`"
+                        )
+
+                    } catch (Exception e) {
+                        slackSend(
+                            channel: env.SLACK_CHANNEL,
+                            teamDomain: env.SLACK_TEAM_DOMAIN,
+                            color: 'danger',
+                            message: ":x: Échec de la construction Docker pour *${env.APP_NAME}*\n" +
+                                    "Erreur: ${e.getMessage()}\n" +
+                                    "Build: #${env.BUILD_NUMBER}"
+                        )
+                        currentBuild.result = 'FAILURE'
+                        error "Échec de la construction Docker: ${e.getMessage()}"
+                    }
                 }
             }
         }
 
         stage('Deploy to Staging') {
+            when {
+                branch 'develop'
+            }
             steps {
                 echo 'Déploiement vers l\'environnement de staging...'
                 script {
                     try {
+                        slackSend(
+                            channel: env.SLACK_CHANNEL,
+                            teamDomain: env.SLACK_TEAM_DOMAIN,
+                            color: 'warning',
+                            message: ":rocket: *${env.APP_NAME}* - Déploiement STAGING en cours...\n" +
+                                    "Image: `${env.DOCKER_LATEST}`"
+                        )
+
                         sh '''
                             echo "Arrêt du conteneur staging existant..."
                             docker stop ${CONTAINER_NAME}-staging || true
@@ -123,7 +162,24 @@ CMD ["node", "dist/index.js"]
                             sleep 10
                             docker ps | grep ${CONTAINER_NAME}-staging
                         '''
+
+                        slackSend(
+                            channel: env.SLACK_CHANNEL,
+                            teamDomain: env.SLACK_TEAM_DOMAIN,
+                            color: 'good',
+                            message: ":white_check_mark: *${env.APP_NAME}* déployé en STAGING avec succès!\n" +
+                                    "URL: http://votre-serveur:3001\n" +
+                                    "Build: #${env.BUILD_NUMBER}"
+                        )
+
                     } catch (Exception e) {
+                        slackSend(
+                            channel: env.SLACK_CHANNEL,
+                            teamDomain: env.SLACK_TEAM_DOMAIN,
+                            color: 'danger',
+                            message: ":warning: Échec du déploiement STAGING pour *${env.APP_NAME}*\n" +
+                                    "Erreur: ${e.getMessage()}"
+                        )
                         currentBuild.result = 'UNSTABLE'
                         echo "Warning: Staging deployment failed: ${e.getMessage()}"
                     }
@@ -133,12 +189,21 @@ CMD ["node", "dist/index.js"]
 
         stage('Deploy to Production') {
             when {
-                branch 'master'
+                branch 'main'
             }
             steps {
                 echo 'Déploiement vers la production...'
                 script {
                     try {
+                        slackSend(
+                            channel: env.SLACK_CHANNEL,
+                            teamDomain: env.SLACK_TEAM_DOMAIN,
+                            color: 'warning',
+                            message: ":fire: *${env.APP_NAME}* - Déploiement PRODUCTION en cours...\n" +
+                                    "Image: `${env.DOCKER_LATEST}`\n" +
+                                    "Initiateur: ${env.BUILD_USER ?: 'Système'}"
+                        )
+
                         sh '''
                             echo "Sauvegarde de l'ancien conteneur..."
                             if docker ps -q -f name=${CONTAINER_NAME}; then
@@ -161,8 +226,29 @@ CMD ["node", "dist/index.js"]
                             sleep 15
                             docker ps | grep ${CONTAINER_NAME}
                         '''
+
+                        slackSend(
+                            channel: env.SLACK_CHANNEL,
+                            teamDomain: env.SLACK_TEAM_DOMAIN,
+                            color: 'good',
+                            message: ":tada: *${env.APP_NAME}* déployé en PRODUCTION avec succès! <!channel>\n" +
+                                    "URL: http://votre-serveur:3000\n" +
+                                    "Build: #${env.BUILD_NUMBER}\n" +
+                                    "Version: ${env.DOCKER_VERSIONED}\n" +
+                                    "Déployé par: ${env.BUILD_USER ?: 'Jenkins'}"
+                        )
+
                     } catch (Exception e) {
-                        // Rollback en cas d'échec
+                        slackSend(
+                            channel: env.SLACK_CHANNEL,
+                            teamDomain: env.SLACK_TEAM_DOMAIN,
+                            color: 'danger',
+                            message: ":rotating_light: ÉCHEC CRITIQUE - Déploiement PRODUCTION de *${env.APP_NAME}* <!channel>\n" +
+                                    "Erreur: ${e.getMessage()}\n" +
+                                    "Build: #${env.BUILD_NUMBER}\n" +
+                                    "Tentative de rollback en cours..."
+                        )
+
                         sh '''
                             echo "Échec du déploiement, tentative de rollback..."
                             docker stop ${CONTAINER_NAME} || true
@@ -189,7 +275,6 @@ CMD ["node", "dist/index.js"]
                         sh '''
                             echo "Test de connectivité sur le conteneur..."
 
-                            # Déterminer le port selon l'environnement
                             if [ "${BRANCH_NAME}" = "develop" ]; then
                                 TEST_PORT=3001
                                 CONTAINER_TO_CHECK="${CONTAINER_NAME}-staging"
@@ -198,7 +283,6 @@ CMD ["node", "dist/index.js"]
                                 CONTAINER_TO_CHECK="${CONTAINER_NAME}"
                             fi
 
-                            # Attendre que l'application soit prête
                             for i in {1..30}; do
                                 if docker exec $CONTAINER_TO_CHECK curl -f http://localhost:3000/health > /dev/null 2>&1; then
                                     echo "Application accessible sur le port $TEST_PORT"
@@ -208,11 +292,18 @@ CMD ["node", "dist/index.js"]
                                 sleep 2
                             done
 
-                            # Vérification finale
                             docker logs --tail 20 $CONTAINER_TO_CHECK
                             echo "Déploiement Docker terminé avec succès"
                         '''
                     } catch (Exception e) {
+                        slackSend(
+                            channel: env.SLACK_CHANNEL,
+                            teamDomain: env.SLACK_TEAM_DOMAIN,
+                            color: 'warning',
+                            message: ":warning: Health check échoué pour *${env.APP_NAME}*\n" +
+                                    "L'application pourrait être en cours de démarrage...\n" +
+                                    "Veuillez vérifier manuellement."
+                        )
                         currentBuild.result = 'UNSTABLE'
                         echo "Warning: Health check failed: ${e.getMessage()}"
                     }
@@ -225,12 +316,8 @@ CMD ["node", "dist/index.js"]
                 echo 'Nettoyage des anciennes images Docker...'
                 sh '''
                     echo "Nettoyage des images Docker obsolètes..."
-                    # Garder les 5 dernières versions
                     docker images ${DOCKER_IMAGE} --format "table {{.Tag}}" | grep -E "^[0-9]+$" | sort -nr | tail -n +6 | xargs -r -I {} docker rmi ${DOCKER_IMAGE}:{} || true
-
-                    # Nettoyage des conteneurs arrêtés
                     docker container prune -f
-
                     echo "Nettoyage terminé"
                 '''
             }
@@ -241,54 +328,67 @@ CMD ["node", "dist/index.js"]
         always {
             echo 'Nettoyage des ressources temporaires...'
             sh '''
-                rm -rf node_modules/.cache || true
-                rm -rf staging || true
+                rm -rf node_modules/.cache
+                rm -rf staging
             '''
         }
         success {
             echo 'Pipeline exécuté avec succès!'
             script {
                 def deploymentInfo = ""
+                def environmentEmoji = ""
+
                 if (env.BRANCH_NAME == 'develop') {
-                    deploymentInfo = "Application staging disponible sur: http://[VOTRE_SERVEUR]:3001"
-                } else if (env.BRANCH_NAME == 'master') {
-                    deploymentInfo = "Application production disponible sur: http://[VOTRE_SERVEUR]:3000"
+                    deploymentInfo = "Application staging: http://votre-serveur:3001"
+                    environmentEmoji = ":test_tube:"
+                } else if (env.BRANCH_NAME == 'main') {
+                    deploymentInfo = "Application production: http://votre-serveur:3000"
+                    environmentEmoji = ":checkered_flag:"
+                } else {
+                    environmentEmoji = ":construction:"
+                    deploymentInfo = "Build de test terminé"
                 }
 
-                emailext (
-                    subject: "Build Success: ${env.JOB_NAME} - ${env.BUILD_NUMBER}",
-                    body: """
-                        Le déploiement de ${env.JOB_NAME} s'est terminé avec succès.
-
-                        Build: ${env.BUILD_NUMBER}
-                        Branch: ${env.BRANCH_NAME}
-                        Docker Image: ${env.DOCKER_VERSIONED}
-
-                        ${deploymentInfo}
-
-                        Voir les détails: ${env.BUILD_URL}
-                    """,
-                    to: "${env.CHANGE_AUTHOR_EMAIL ?: 'votre@email.com'}"
+                slackSend(
+                    channel: env.SLACK_CHANNEL,
+                    teamDomain: env.SLACK_TEAM_DOMAIN,
+                    color: 'good',
+                    message: "${environmentEmoji} *Pipeline terminé avec succès*\n" +
+                            "Projet: *${env.APP_NAME}*\n" +
+                            "Build: #${env.BUILD_NUMBER}\n" +
+                            "Branch: ${env.BRANCH_NAME}\n" +
+                            "Durée: ${currentBuild.durationString}\n" +
+                            "${deploymentInfo}\n" +
+                            "Détails: ${env.BUILD_URL}"
                 )
             }
         }
         failure {
             echo 'Le pipeline a échoué!'
-            emailext (
-                subject: "Build Failed: ${env.JOB_NAME} - ${env.BUILD_NUMBER}",
-                body: """
-                    Le déploiement de ${env.JOB_NAME} a échoué.
-
-                    Build: ${env.BUILD_NUMBER}
-                    Branch: ${env.BRANCH_NAME}
-
-                    Voir les détails: ${env.BUILD_URL}
-                """,
-                to: "${env.CHANGE_AUTHOR_EMAIL ?: 'votre@email.com'}"
+            slackSend(
+                channel: env.SLACK_CHANNEL,
+                teamDomain: env.SLACK_TEAM_DOMAIN,
+                color: 'danger',
+                message: ":x: *ÉCHEC DU PIPELINE* <!channel>\n" +
+                        "Projet: *${env.APP_NAME}*\n" +
+                        "Build: #${env.BUILD_NUMBER}\n" +
+                        "Branch: ${env.BRANCH_NAME}\n" +
+                        "Durée: ${currentBuild.durationString}\n" +
+                        "Voir les logs: ${env.BUILD_URL}console"
             )
         }
         unstable {
             echo 'Build instable - des avertissements ont été détectés'
+            slackSend(
+                channel: env.SLACK_CHANNEL,
+                teamDomain: env.SLACK_TEAM_DOMAIN,
+                color: 'warning',
+                message: ":warning: *Build instable*\n" +
+                        "Projet: *${env.APP_NAME}*\n" +
+                        "Build: #${env.BUILD_NUMBER}\n" +
+                        "Des avertissements ont été détectés\n" +
+                        "Détails: ${env.BUILD_URL}"
+            )
         }
     }
 }
