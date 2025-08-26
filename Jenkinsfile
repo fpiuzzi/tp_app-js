@@ -22,7 +22,18 @@ pipeline {
         stage('Checkout') {
             steps {
                 echo 'Récupération du code source...'
-                checkout scm
+
+                cleanWs()
+
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: '*/master']],
+                    extensions: [
+                        [$class: 'CleanBeforeCheckout'],
+                        [$class: 'CloneOption', depth: 0, noTags: false, reference: '', shallow: false]
+                    ],
+                    userRemoteConfigs: [[url: 'https://github.com/fpiuzzi/tp_app-js.git']]
+                ])
             }
         }
 
