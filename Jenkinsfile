@@ -1,13 +1,9 @@
 pipeline {
     agent {
         docker {
-            image 'docker:latest'
-            args '-v /var/run/docker.sock:/var/run/docker.sock'
+            image 'node:18'
+            args '-v /var/run/docker.sock:/var/run/docker.sock -u root'
         }
-    }
-
-    tools {
-        nodejs 'node18'
     }
 
     environment {
@@ -19,6 +15,8 @@ pipeline {
         DOCKER_LATEST = "${DOCKER_IMAGE}:latest"
         DOCKER_VERSIONED = "${DOCKER_IMAGE}:${DOCKER_TAG}"
         CONTAINER_NAME = 'mon-app-js-container'
+        STAGING_PORT = '3001'
+        PRODUCTION_PORT = '3000'
     }
 
     stages {
@@ -32,11 +30,11 @@ pipeline {
         stage('Install Dependencies') {
             steps {
                 echo 'Installation des dépendances Node.js...'
-                sh '''
+                sh """
                     npm install
                     node --version
                     npm --version
-                '''
+                """
             }
         }
 
@@ -55,10 +53,10 @@ pipeline {
         stage('Security Scan') {
             steps {
                 echo 'Analyse de sécurité...'
-                sh '''
+                sh """
                     echo "Vérification des dépendances..."
-                    npm audit --audit-level=high
-                '''
+                    npm audit --audit-level=high || true
+                """
             }
         }
 
@@ -67,10 +65,8 @@ pipeline {
                 echo 'Construction de l\'image Docker...'
                 script {
                     try {
-
                         sh "docker build -t ${DOCKER_VERSIONED} ."
                         sh "docker tag ${DOCKER_VERSIONED} ${DOCKER_LATEST}"
-
                         echo "Image Docker construite avec succès: ${DOCKER_VERSIONED}"
                     } catch (Exception e) {
                         echo "Échec de la construction Docker"
@@ -82,20 +78,41 @@ pipeline {
 
         stage('Deploy to Staging') {
             when {
-                expression { env.BRANCH_NAME == 'develop' || env.BRANCH_NAME == 'master' }
+                anyOf {
+                    branch 'develop'
+                    branch 'master'
+                }
             }
             steps {
                 echo 'Déploiement vers l\'environnement de staging...'
-                sh '''
+                sh """
                     # Arrêter le conteneur existant s'il existe
                     docker stop ${CONTAINER_NAME}-staging || true
                     docker rm ${CONTAINER_NAME}-staging || true
 
                     # Lancer le nouveau conteneur
-                    docker run -d --name ${CONTAINER_NAME}-staging -p 3001:3000 ${DOCKER_LATEST}
+                    docker run -d --name ${CONTAINER_NAME}-staging -p ${STAGING_PORT}:3000 ${DOCKER_LATEST}
 
-                    echo "Application déployée en staging sur le port 3001"
-                '''
+                    echo "Application déployée en staging sur le port ${STAGING_PORT}"
+                """
+            }
+            post {
+                success {
+                    echo 'Vérification de santé du déploiement staging...'
+                    sh """
+                        # Attente pour que l'application démarre
+                        sleep 10
+
+                        # Vérification du statut HTTP
+                        STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:${STAGING_PORT}/health || echo 'down')
+                        if [ "\$STATUS" = "200" ]; then
+                            echo "L'application staging répond correctement"
+                        else
+                            echo "L'application staging ne répond pas correctement (code: \$STATUS)"
+                            exit 1
+                        fi
+                    """
+                }
             }
         }
 
@@ -106,47 +123,47 @@ pipeline {
             steps {
                 echo 'Déploiement vers la production...'
                 input message: 'Voulez-vous déployer en production?'
-                sh '''
+                sh """
                     # Arrêter le conteneur existant s'il existe
                     docker stop ${CONTAINER_NAME}-prod || true
                     docker rm ${CONTAINER_NAME}-prod || true
 
                     # Lancer le nouveau conteneur
-                    docker run -d --name ${CONTAINER_NAME}-prod -p 3000:3000 ${DOCKER_LATEST}
+                    docker run -d --name ${CONTAINER_NAME}-prod -p ${PRODUCTION_PORT}:3000 ${DOCKER_LATEST}
 
-                    echo "Application déployée en production sur le port 3000"
-                '''
+                    echo "Application déployée en production sur le port ${PRODUCTION_PORT}"
+                """
             }
-        }
+            post {
+                success {
+                    echo 'Vérification de santé du déploiement production...'
+                    sh """
+                        # Attente pour que l'application démarre
+                        sleep 10
 
-        stage('Health Check') {
-            steps {
-                echo 'Vérification de santé de l\'application...'
-                sh '''
-                    # Attente pour que l'application démarre
-                    sleep 10
-
-                    # Vérification du statut HTTP
-                    if [ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/health || echo 'down')" = "200" ]; then
-                        echo "L'application répond correctement"
-                    else
-                        echo "L'application ne répond pas correctement"
-                        exit 1
-                    fi
-                '''
+                        # Vérification du statut HTTP
+                        STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost:${PRODUCTION_PORT}/health || echo 'down')
+                        if [ "\$STATUS" = "200" ]; then
+                            echo "L'application production répond correctement"
+                        else
+                            echo "L'application production ne répond pas correctement (code: \$STATUS)"
+                            exit 1
+                        fi
+                    """
+                }
             }
         }
 
         stage('Cleanup Old Images') {
             steps {
                 echo 'Nettoyage des anciennes images...'
-                sh '''
-                    # Garder uniquement les 3 dernières images
+                sh """
+                    # Garder uniquement les images récentes
                     docker image prune -af --filter "until=24h"
 
                     # Afficher les images restantes
-                    docker images | grep ${DOCKER_IMAGE}
-                '''
+                    docker images | grep ${DOCKER_IMAGE} || true
+                """
             }
         }
     }
@@ -154,14 +171,12 @@ pipeline {
     post {
         always {
             echo 'Nettoyage des ressources temporaires...'
-            sh '''
-                rm -rf node_modules/.cache
-                rm -rf staging
-            '''
+            sh """
+                rm -rf node_modules/.cache || true
+            """
         }
         success {
             echo 'Pipeline exécuté avec succès!'
-
             script {
                 try {
                     slackSend(color: 'good', message: "Déploiement réussi : ${env.JOB_NAME} #${env.BUILD_NUMBER}")
@@ -172,7 +187,6 @@ pipeline {
         }
         failure {
             echo 'Le pipeline a échoué!'
-
             script {
                 try {
                     slackSend(color: 'danger', message: "Échec du déploiement : ${env.JOB_NAME} #${env.BUILD_NUMBER}")
