@@ -1,14 +1,8 @@
 pipeline {
+    agent any
 
-    agent {
-        docker {
-            image 'node:18-alpine'
-            args '-u root'
-        }
-    }
-
-    options {
-        skipDefaultCheckout()
+    tools {
+        nodejs 'node18'
     }
 
     environment {
@@ -25,23 +19,10 @@ pipeline {
     }
 
     stages {
-        stage('Initialisation & Checkout') {
+        stage('Checkout') {
             steps {
-                echo 'Installation de Git et récupération du code source...'
-
-                sh 'apk add --no-cache git'
-
-                cleanWs()
-
-                checkout([
-                    $class: 'GitSCM',
-                    branches: [[name: '*/master']],
-                    extensions: [
-                        [$class: 'CleanBeforeCheckout'],
-                        [$class: 'CloneOption', depth: 0, noTags: false, reference: '', shallow: false]
-                    ],
-                    userRemoteConfigs: [[url: 'https://github.com/fpiuzzi/tp_app-js.git']]
-                ])
+                echo 'Récupération du code source...'
+                checkout scm
             }
         }
 
@@ -123,6 +104,7 @@ pipeline {
                             docker images | grep ${DOCKER_IMAGE}
                         '''
 
+                        // Notification de succès du build Docker
                         slackSend(
                             channel: env.SLACK_CHANNEL,
                             teamDomain: env.SLACK_TEAM_DOMAIN,
@@ -141,6 +123,65 @@ pipeline {
                         )
                         currentBuild.result = 'FAILURE'
                         error "Échec de la construction Docker: ${e.getMessage()}"
+                    }
+                }
+            }
+        }
+
+        stage('Deploy to Staging') {
+            when {
+                branch 'develop'
+            }
+            steps {
+                echo 'Déploiement vers l\'environnement de staging...'
+                script {
+                    try {
+                        slackSend(
+                            channel: env.SLACK_CHANNEL,
+                            teamDomain: env.SLACK_TEAM_DOMAIN,
+                            color: 'warning',
+                            message: ":rocket: *${env.APP_NAME}* - Déploiement STAGING en cours...\n" +
+                                    "Image: `${env.DOCKER_LATEST}`"
+                        )
+
+                        sh '''
+                            echo "Arrêt du conteneur staging existant..."
+                            docker stop ${CONTAINER_NAME}-staging || true
+                            docker rm ${CONTAINER_NAME}-staging || true
+
+                            echo "Démarrage du conteneur staging..."
+                            docker run -d \\
+                                --name ${CONTAINER_NAME}-staging \\
+                                --restart unless-stopped \\
+                                -p 3001:3000 \\
+                                -e NODE_ENV=staging \\
+                                -e APP_NAME=${APP_NAME} \\
+                                ${DOCKER_LATEST}
+
+                            echo "Vérification du déploiement staging..."
+                            sleep 10
+                            docker ps | grep ${CONTAINER_NAME}-staging
+                        '''
+
+                        slackSend(
+                            channel: env.SLACK_CHANNEL,
+                            teamDomain: env.SLACK_TEAM_DOMAIN,
+                            color: 'good',
+                            message: ":white_check_mark: *${env.APP_NAME}* déployé en STAGING avec succès!\n" +
+                                    "URL: http://votre-serveur:3001\n" +
+                                    "Build: #${env.BUILD_NUMBER}"
+                        )
+
+                    } catch (Exception e) {
+                        slackSend(
+                            channel: env.SLACK_CHANNEL,
+                            teamDomain: env.SLACK_TEAM_DOMAIN,
+                            color: 'danger',
+                            message: ":warning: Échec du déploiement STAGING pour *${env.APP_NAME}*\n" +
+                                    "Erreur: ${e.getMessage()}"
+                        )
+                        currentBuild.result = 'UNSTABLE'
+                        echo "Warning: Staging deployment failed: ${e.getMessage()}"
                     }
                 }
             }
@@ -233,11 +274,18 @@ pipeline {
                     try {
                         sh '''
                             echo "Test de connectivité sur le conteneur..."
-                            CONTAINER_TO_CHECK="${CONTAINER_NAME}"
+
+                            if [ "${BRANCH_NAME}" = "develop" ]; then
+                                TEST_PORT=3001
+                                CONTAINER_TO_CHECK="${CONTAINER_NAME}-staging"
+                            else
+                                TEST_PORT=3000
+                                CONTAINER_TO_CHECK="${CONTAINER_NAME}"
+                            fi
 
                             for i in {1..30}; do
                                 if docker exec $CONTAINER_TO_CHECK curl -f http://localhost:3000/health > /dev/null 2>&1; then
-                                    echo "Application accessible sur le port 3000"
+                                    echo "Application accessible sur le port $TEST_PORT"
                                     break
                                 fi
                                 echo "Attente de l'application... ($i/30)"
@@ -290,7 +338,10 @@ pipeline {
                 def deploymentInfo = ""
                 def environmentEmoji = ""
 
-                if (env.BRANCH_NAME == 'master') {
+                if (env.BRANCH_NAME == 'develop') {
+                    deploymentInfo = "Application staging: http://votre-serveur:3001"
+                    environmentEmoji = ":test_tube:"
+                } else if (env.BRANCH_NAME == 'main') {
                     deploymentInfo = "Application production: http://votre-serveur:3000"
                     environmentEmoji = ":checkered_flag:"
                 } else {
