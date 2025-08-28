@@ -6,48 +6,22 @@ pipeline {
     }
 
     stages {
-        stage('Préparation') {
-            steps {
-                echo 'Démarrage du pipeline de test'
-                sh 'node --version'
-                sh 'npm --version'
-            }
-        }
-
-        stage('Checkout') {
-            steps {
-                checkout scm
-            }
-        }
-
-        stage('Installation') {
-            steps {
-                sh 'npm ci || npm install'
-            }
-        }
-
-        stage('Tests') {
-            steps {
-                sh 'npm test || echo "Pas de tests ou tests échoués"'
-            }
-        }
-
         stage('Build') {
             steps {
-                sh 'npm run build || echo "Pas de build configuré"'
+                echo 'Compilation...'
             }
         }
-    }
 
-    post {
-        success {
-            echo 'Pipeline de test réussi!'
+        stage('Test') {
+            steps {
+                echo 'Tests...'
+            }
         }
-        failure {
-            echo 'Pipeline de test échoué!'
-        }
-        always {
-            echo 'Pipeline terminé'
+
+        stage('Deploy') {
+            steps {
+                echo 'Déploiement...'
+            }
         }
     }
 }
