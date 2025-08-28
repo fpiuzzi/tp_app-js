@@ -1,6 +1,10 @@
 pipeline {
     agent any
 
+    tools {
+            nodejs 'Node18'
+    }
+
     environment {
         NODE_VERSION = '18'
         APP_NAME = 'mon-app-js'
@@ -12,6 +16,8 @@ pipeline {
         CONTAINER_NAME = 'mon-app-js-container'
         STAGING_PORT = '3001'
         PRODUCTION_PORT = '3000'
+
+        PATH = "${env.PATH}:/usr/local/bin"
     }
 
     stages {
@@ -61,13 +67,13 @@ pipeline {
             steps {
                 echo 'Construction de l\'image Docker...'
                 script {
-                    try {
+                    def dockerInstalled = sh(script: 'command -v docker', returnStatus: true) == 0
+
+                    if (dockerInstalled) {
                         sh "docker build -t ${DOCKER_VERSIONED} ."
                         sh "docker tag ${DOCKER_VERSIONED} ${DOCKER_LATEST}"
-                        echo "Image Docker construite avec succès: ${DOCKER_VERSIONED}"
-                    } catch (Exception e) {
-                        echo "Échec de la construction Docker: ${e.getMessage()}"
-                        error "Échec de la construction Docker"
+                    } else {
+                        error "Docker n'est pas installé. Veuillez installer Docker sur le serveur Jenkins."
                     }
                 }
             }
@@ -200,18 +206,18 @@ pipeline {
     post {
         always {
             echo 'Nettoyage des ressources temporaires...'
-            // Pas besoin de node {} car nous sommes déjà dans un contexte valide avec agent any
+
             sh 'rm -rf node_modules/.cache || true'
         }
         success {
             echo 'Pipeline exécuté avec succès!'
             script {
                 try {
-                    // Tentative d'envoi de notification Slack si configuré
+
                     slackSend(
                         color: 'good',
                         message: "Déploiement réussi : ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-                        tokenCredentialId: 'slack-token'  // À configurer dans Jenkins
+                        tokenCredentialId: 'slack-token'
                     )
                 } catch (Exception e) {
                     echo "Note: Notification Slack non envoyée. Vérifiez la configuration: ${e.getMessage()}"
@@ -225,7 +231,7 @@ pipeline {
                     slackSend(
                         color: 'danger',
                         message: "Échec du déploiement : ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-                        tokenCredentialId: 'slack-token'  // À configurer dans Jenkins
+                        tokenCredentialId: 'slack-token'
                     )
                 } catch (Exception e) {
                     echo "Note: Notification Slack non envoyée. Vérifiez la configuration: ${e.getMessage()}"
