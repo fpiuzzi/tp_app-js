@@ -9,9 +9,23 @@ pipeline {
         APP_NAME = 'mon-app-js'
         DOCKER_IMAGE = 'mon-app-js'
         DOCKER_TAG = "${BUILD_NUMBER}"
+        DOCKER_LATEST = "${DOCKER_IMAGE}:latest"
+        DOCKER_VERSIONED = "${DOCKER_IMAGE}:${DOCKER_TAG}"
+        CONTAINER_NAME = 'mon-app-js-container'
+        STAGING_PORT = '3001'
+        PRODUCTION_PORT = '3000'
     }
 
     stages {
+        stage('Vérification') {
+            steps {
+                echo 'Vérification des outils disponibles...'
+                sh 'node --version || echo "Node.js non disponible"'
+                sh 'npm --version || echo "npm non disponible"'
+                sh 'docker --version || echo "Docker non disponible"'
+            }
+        }
+
         stage('Checkout') {
             steps {
                 checkout scm
@@ -26,45 +40,71 @@ pipeline {
 
         stage('Test') {
             steps {
-                sh 'npm test || true'
+                sh 'npm test || echo "Tests ignorés ou échoués"'
+            }
+            post {
+                always {
+                    junit testResults: '**/test-results.xml', allowEmptyResults: true
+                }
             }
         }
 
-        stage('Build Docker') {
+        stage('Docker Build') {
             steps {
-                sh '''
-                if command -v docker &> /dev/null; then
-                    docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} .
-                    docker tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_IMAGE}:latest
-                else
-                    echo "Docker non disponible"
-                fi
-                '''
+                script {
+                    sh '''
+                    if command -v docker &> /dev/null; then
+                        docker build -t ${DOCKER_VERSIONED} .
+                        docker tag ${DOCKER_VERSIONED} ${DOCKER_LATEST}
+                        echo "Image Docker construite avec succès"
+                    else
+                        echo "Docker non disponible, étape ignorée"
+                    fi
+                    '''
+                }
             }
         }
 
-        stage('Deploy') {
+        stage('Deploy Staging') {
+            when {
+                anyOf {
+                    branch 'develop'
+                    branch 'master'
+                }
+            }
             steps {
-                echo 'Déploiement...'
-                sh '''
-                if command -v docker &> /dev/null; then
-                    docker stop ${APP_NAME} || true
-                    docker rm ${APP_NAME} || true
-                    docker run -d -p 3000:3000 --name ${APP_NAME} ${DOCKER_IMAGE}:latest || echo "Déploiement ignoré"
-                else
-                    echo "Docker non disponible"
-                fi
-                '''
+                script {
+                    sh '''
+                    if command -v docker &> /dev/null; then
+                        docker stop ${CONTAINER_NAME}-staging || true
+                        docker rm ${CONTAINER_NAME}-staging || true
+                        docker run -d --name ${CONTAINER_NAME}-staging -p ${STAGING_PORT}:3000 ${DOCKER_LATEST} || echo "Déploiement staging ignoré"
+                    else
+                        echo "Docker non disponible"
+                    fi
+                    '''
+                }
             }
         }
-    }
 
-    post {
-        success {
-            echo 'Build réussi!'
-        }
-        failure {
-            echo 'Build échoué!'
+        stage('Deploy Production') {
+            when {
+                branch 'master'
+            }
+            steps {
+                input message: 'Déployer en production?', ok: 'Oui'
+                script {
+                    sh '''
+                    if command -v docker &> /dev/null; then
+                        docker stop ${CONTAINER_NAME}-prod || true
+                        docker rm ${CONTAINER_NAME}-prod || true
+                        docker run -d --name ${CONTAINER_NAME}-prod -p ${PRODUCTION_PORT}:3000 ${DOCKER_LATEST} || echo "Déploiement production ignoré"
+                    else
+                        echo "Docker non disponible"
+                    fi
+                    '''
+                }
+            }
         }
     }
 }
