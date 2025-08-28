@@ -62,8 +62,8 @@ pipeline {
                 echo 'Construction de l\'image Docker...'
                 script {
                     try {
-                        // Utilisation de la syntaxe du plugin Docker
-                        docker.build("${DOCKER_VERSIONED}", ".")
+
+                        sh "docker build -t ${DOCKER_VERSIONED} ."
                         sh "docker tag ${DOCKER_VERSIONED} ${DOCKER_LATEST}"
 
                         echo "Image Docker construite avec succès: ${DOCKER_VERSIONED}"
@@ -156,11 +156,25 @@ pipeline {
         }
         success {
             echo 'Pipeline exécuté avec succès!'
-            slackSend(color: 'good', message: "Déploiement réussi : ${env.JOB_NAME} #${env.BUILD_NUMBER}")
+
+            script {
+                try {
+                    slackSend(color: 'good', message: "Déploiement réussi : ${env.JOB_NAME} #${env.BUILD_NUMBER}")
+                } catch (Exception e) {
+                    echo "Note: Notification Slack non envoyée. Vérifiez la configuration des credentials Slack."
+                }
+            }
         }
         failure {
             echo 'Le pipeline a échoué!'
-            slackSend(color: 'danger', message: "Échec du déploiement : ${env.JOB_NAME} #${env.BUILD_NUMBER}")
+
+            script {
+                try {
+                    slackSend(color: 'danger', message: "Échec du déploiement : ${env.JOB_NAME} #${env.BUILD_NUMBER}")
+                } catch (Exception e) {
+                    echo "Note: Notification Slack non envoyée. Vérifiez la configuration des credentials Slack."
+                }
+            }
         }
     }
 }
