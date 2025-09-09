@@ -4,7 +4,7 @@ services:
   app:
     container_name: ${CONTAINER_NAME:-mon-app-js-container}
     build:
-      context: ./app
+      context: .
       dockerfile: Dockerfile
       args:
         - NODE_VERSION=${NODE_VERSION:-18}
