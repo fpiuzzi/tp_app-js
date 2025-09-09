@@ -6,23 +6,22 @@ pipeline {
   }
 
   environment {
-    APP_NAME           = 'mon-app-js'
-    CONTAINER_NAME     = 'mon-app-js-container'
-    STAGING_PORT       = '3001'
-    PRODUCTION_PORT    = '3000'
-    REGISTRY_URL       = ''
-    IMAGE_REPO         = 'monuser/mon-app-js'
-    REGISTRY_CRED      = 'REGISTRY_CRED'
-    GIT_SHORT          = ''
-    IMAGE_TAG          = ''
-    IMAGE_LATEST       = 'latest'
-    PATH               = "${env.PATH}:/usr/local/bin"
-    COMPOSE_PROJECT_NAME = "${env.JOB_NAME}-${env.BUILD_NUMBER}"
+    APP_NAME              = 'mon-app-js'
+    CONTAINER_NAME        = 'mon-app-js-container'
+    STAGING_PORT          = '3001'
+    PRODUCTION_PORT       = '3000'
+    REGISTRY_URL          = ''
+    IMAGE_REPO            = 'monuser/mon-app-js'
+    REGISTRY_CRED         = 'REGISTRY_CRED'
+    GIT_SHORT             = ''
+    IMAGE_TAG             = ''
+    IMAGE_LATEST          = 'latest'
+    PATH                  = "${env.PATH}:/usr/local/bin"
+    COMPOSE_PROJECT_NAME  = "${env.JOB_NAME}-${env.BUILD_NUMBER}"
   }
 
   options {
     timestamps()
-    ansiColor('xterm')
     skipDefaultCheckout(true)
   }
 
@@ -71,8 +70,7 @@ pipeline {
       }
     }
 
-    stage('Tests (optionnel)') {
-      when { anyOf { fileExists('package.json'); fileExists('pytest.ini'); fileExists('pom.xml') } }
+    stage('Tests') {
       steps {
         script {
           if (fileExists('package.json')) {
@@ -81,12 +79,14 @@ pipeline {
             sh 'docker compose exec -T app pytest || true'
           } else if (fileExists('pom.xml')) {
             sh 'docker compose exec -T app mvn -q -DskipTests=false test || true'
+          } else {
+            echo 'Aucun test détecté'
           }
         }
       }
     }
 
-    stage('Login registry (optionnel)') {
+    stage('Login registry') {
       when { expression { return env.REGISTRY_CRED?.trim() } }
       steps {
         withCredentials([usernamePassword(credentialsId: env.REGISTRY_CRED, usernameVariable: 'REG_USER', passwordVariable: 'REG_PASS')]) {
@@ -101,7 +101,7 @@ pipeline {
       }
     }
 
-    stage('Push image (optionnel)') {
+    stage('Push image') {
       when { allOf { branch 'main'; expression { return env.REGISTRY_CRED?.trim() } } }
       steps {
         sh '''
@@ -121,32 +121,18 @@ pipeline {
       sh 'rm -rf node_modules/.cache || true'
       sh 'docker image prune -af || true'
     }
-
     success {
       script {
         try {
-          slackSend(
-            color: 'good',
-            message: "Déploiement réussi : ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-            tokenCredentialId: 'slack-token'
-          )
-        } catch (Exception e) {
-          echo "Slack non envoyé"
-        }
+          slackSend(color: 'good', message: "Déploiement réussi : ${env.JOB_NAME} #${env.BUILD_NUMBER}", tokenCredentialId: 'slack-token')
+        } catch (Exception e) { echo "Slack non envoyé" }
       }
     }
-
     failure {
       script {
         try {
-          slackSend(
-            color: 'danger',
-            message: "Échec du déploiement : ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-            tokenCredentialId: 'slack-token'
-          )
-        } catch (Exception e) {
-          echo "Slack non envoye"
-        }
+          slackSend(color: 'danger', message: "Échec du déploiement : ${env.JOB_NAME} #${env.BUILD_NUMBER}", tokenCredentialId: 'slack-token')
+        } catch (Exception e) { echo "Slack non envoyé" }
       }
     }
   }
