@@ -1,0 +1,16 @@
+version: "3.8"
+
+services:
+  app:
+    container_name: ${CONTAINER_NAME:-mon-app-js-container}
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+      args:
+        - NODE_VERSION=${NODE_VERSION:-18}
+    image: ${APP_NAME:-mon-app-js}
+    ports:
+      - "${STAGING_PORT:-3001}:3000"
+    environment:
+      - NODE_ENV=production
+    restart: unless-stopped
