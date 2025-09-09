@@ -145,7 +145,7 @@ pipeline {
             tokenCredentialId: 'slack-token'
           )
         } catch (Exception e) {
-          echo "Slack non envoyé"
+          echo "Slack non envoye"
         }
       }
     }
