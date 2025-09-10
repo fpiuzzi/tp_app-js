@@ -10,11 +10,11 @@ pipeline {
     CONTAINER_NAME        = 'mon-app-js-container'
     STAGING_PORT          = '3001'
     PRODUCTION_PORT       = '3000'
-    REGISTRY_URL          = ''                           // ex: registry.hub.docker.com
-    IMAGE_REPO            = 'monuser/mon-app-js'         // ex: namespace/repo
-    REGISTRY_CRED         = 'REGISTRY_CRED'              // credentialsId Jenkins (username+password)
+    REGISTRY_URL          = ''
+    IMAGE_REPO            = 'monuser/mon-app-js'
+    REGISTRY_CRED         = 'REGISTRY_CRED'
     GIT_SHORT             = ''
-    IMAGE_TAG             = ''                           // calculé au checkout, fallback au build
+    IMAGE_TAG             = ''                 // sera recalculé
     IMAGE_LATEST          = 'latest'
     PATH                  = "${env.PATH}:/usr/local/bin"
     COMPOSE_PROJECT_NAME  = "${env.JOB_NAME}-${env.BUILD_NUMBER}"
@@ -30,14 +30,14 @@ pipeline {
       steps {
         checkout scm
         script {
-          def short = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
-          def bn = env.BUILD_NUMBER ?: ''
-          if (short) {
-            env.GIT_SHORT = short
-            env.IMAGE_TAG = bn ? "${short}-${bn}" : short
+          // Pas de "def", on écrit directement dans env.*
+          env.GIT_SHORT = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+          if (env.GIT_SHORT) {
+            env.IMAGE_TAG = env.BUILD_NUMBER ? "${env.GIT_SHORT}-${env.BUILD_NUMBER}" : env.GIT_SHORT
           } else {
+            // Fallback si git ne renvoie rien
             def ts = new Date().format('yyyyMMddHHmmss', TimeZone.getTimeZone('UTC'))
-            env.IMAGE_TAG = bn ? "${bn}" : ts
+            env.IMAGE_TAG = env.BUILD_NUMBER ?: ts
           }
           echo "IMAGE_TAG (après checkout) = ${env.IMAGE_TAG}"
         }
@@ -159,8 +159,8 @@ pipeline {
       script {
         try {
           slackSend(
-            teamDomain: 'devopsipi',          // sous-domaine Slack (pas d’URL)
-            channel: '#tous-devopsipi',       // assure-toi que le bot est invité
+            teamDomain: 'devopsipi',
+            channel: '#tous-devopsipi',   // vérifie que le bot est invité à ce canal
             botUser: true,
             color: 'good',
             message: "Déploiement réussi : ${env.JOB_NAME} #${env.BUILD_NUMBER}",
