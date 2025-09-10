@@ -1,27 +1,22 @@
+
 FROM node:18-alpine AS builder
-
 WORKDIR /app
-
 COPY package*.json ./
-RUN npm i --package-lock-only
 RUN npm ci
-
 COPY . .
 
 RUN npm run build
 
-FROM node:18-alpine
 
+FROM node:18-alpine
 WORKDIR /app
 
-COPY --from=builder /app/package*.json ./
-RUN npm ci --only=production
+COPY package*.json ./
+RUN npm ci --omit=dev
+
 COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/server.js ./server.js
 
-ENV NODE_ENV=production
-
-USER node
-
+ENV PORT=3000
 EXPOSE 3000
-
-CMD ["node", "dist/server.js"]
+CMD ["node", "server.js"]
