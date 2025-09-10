@@ -5,16 +5,23 @@ pipeline {
     nodejs 'node18'
   }
 
+  parameters {
+    booleanParam(name: 'SLACK_TEST', defaultValue: false, description: 'Envoyer un message de test Slack pendant le build')
+  }
+
   environment {
     APP_NAME              = 'mon-app-js'
     CONTAINER_NAME        = 'mon-app-js-container'
     STAGING_PORT          = '3001'
     PRODUCTION_PORT       = '3000'
-    REGISTRY_URL          = ''
-    IMAGE_REPO            = 'monuser/mon-app-js'
-    REGISTRY_CRED         = 'REGISTRY_CRED'
+
+    // >>> Push en local : on cible le registre local non-authentifié
+    REGISTRY_URL          = '127.0.0.1:5000'      // registre local en HTTP
+    IMAGE_REPO            = 'monuser/mon-app-js'  // namespace/répo côté registre local
+    REGISTRY_CRED         = ''                    // pas de login pour le registre local
+
     GIT_SHORT             = ''
-    IMAGE_TAG             = ''                 // sera recalculé
+    IMAGE_TAG             = ''
     IMAGE_LATEST          = 'latest'
     PATH                  = "${env.PATH}:/usr/local/bin"
     COMPOSE_PROJECT_NAME  = "${env.JOB_NAME}-${env.BUILD_NUMBER}"
@@ -30,12 +37,10 @@ pipeline {
       steps {
         checkout scm
         script {
-          // Pas de "def", on écrit directement dans env.*
           env.GIT_SHORT = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
           if (env.GIT_SHORT) {
             env.IMAGE_TAG = env.BUILD_NUMBER ? "${env.GIT_SHORT}-${env.BUILD_NUMBER}" : env.GIT_SHORT
           } else {
-            // Fallback si git ne renvoie rien
             def ts = new Date().format('yyyyMMddHHmmss', TimeZone.getTimeZone('UTC'))
             env.IMAGE_TAG = env.BUILD_NUMBER ?: ts
           }
@@ -87,6 +92,24 @@ pipeline {
       }
     }
 
+    // Démarre un registry local en HTTP sur 127.0.0.1:5000 s'il n'existe pas
+    stage('Ensure local registry') {
+      steps {
+        sh '''
+          set -eu
+          if ! docker ps --format '{{.Names}}' | grep -q '^registry$'; then
+            if docker ps -a --format '{{.Names}}' | grep -q '^registry$'; then
+              docker start registry
+            else
+              docker run -d --restart=always --name registry -p 5000:5000 \
+                -v registry-data:/var/lib/registry registry:2
+            fi
+          fi
+          docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}' | sed -n '1p;/^registry\\>/p'
+        '''
+      }
+    }
+
     stage('Démarrage des services (compose up)') {
       steps {
         sh '''
@@ -100,12 +123,17 @@ pipeline {
     stage('Tests') {
       steps {
         script {
+          sh '''
+            echo "== Diagnostics avant test =="
+            docker compose ps || true
+            docker compose logs --no-color --tail=200 app || true
+          '''
           if (fileExists('package.json')) {
-            sh 'docker compose exec -T app npm test || true'
+            sh 'docker compose run --rm app npm test || true'
           } else if (fileExists('pytest.ini')) {
-            sh 'docker compose exec -T app pytest || true'
+            sh 'docker compose run --rm app pytest || true'
           } else if (fileExists('pom.xml')) {
-            sh 'docker compose exec -T app mvn -q -DskipTests=false test || true'
+            sh 'docker compose run --rm app mvn -q -DskipTests=false test || true'
           } else {
             echo 'Aucun test détecté'
           }
@@ -113,29 +141,9 @@ pipeline {
       }
     }
 
-    stage('Login registry') {
-      when { expression { return env.REGISTRY_CRED?.trim() } }
-      steps {
-        withCredentials([usernamePassword(credentialsId: env.REGISTRY_CRED, usernameVariable: 'REG_USER', passwordVariable: 'REG_PASS')]) {
-          sh '''
-            set -eu
-            if [ -n "${REGISTRY_URL}" ]; then
-              echo "$REG_PASS" | docker login "$REGISTRY_URL" -u "$REG_USER" --password-stdin
-            else
-              echo "$REG_PASS" | docker login -u "$REG_USER" --password-stdin
-            fi
-          '''
-        }
-      }
-    }
-
-    stage('Push image') {
-      when {
-        allOf {
-          branch 'master'
-          expression { return env.REGISTRY_CRED?.trim() }
-        }
-      }
+    // Pas de login (REGISTRY_CRED vide). On push quand même (registre local sans auth).
+    stage('Push image (local)') {
+      when { branch 'master' }
       steps {
         sh '''
           set -eu
@@ -144,7 +152,31 @@ pipeline {
           LATEST_TAG="${PREFIX}${IMAGE_REPO}:${IMAGE_LATEST}"
           docker push "${VERSIONED_TAG}"
           docker push "${LATEST_TAG}"
+
+          echo "== Tags présents dans le registre local =="
+          curl -s http://127.0.0.1:5000/v2/_catalog || true
+          curl -s http://127.0.0.1:5000/v2/${IMAGE_REPO}/tags/list || true
         '''
+      }
+    }
+
+    stage('Test Slack (temp)') {
+      when { expression { return params.SLACK_TEST } }
+      steps {
+        script {
+          try {
+            slackSend(
+              teamDomain: 'devopsipi',
+              channel: '#tous-devopsipi',
+              botUser: true,
+              color: '#439FE0',
+              message: "Ping de test Jenkins (${env.JOB_NAME} #${env.BUILD_NUMBER})",
+              tokenCredentialId: 'slack-token'
+            )
+          } catch (e) {
+            echo "Slack non envoyé: ${e.message}"
+          }
+        }
       }
     }
   }
@@ -160,7 +192,7 @@ pipeline {
         try {
           slackSend(
             teamDomain: 'devopsipi',
-            channel: '#tous-devopsipi',   // vérifie que le bot est invité à ce canal
+            channel: '#tous-devopsipi',
             botUser: true,
             color: 'good',
             message: "Déploiement réussi : ${env.JOB_NAME} #${env.BUILD_NUMBER}",
