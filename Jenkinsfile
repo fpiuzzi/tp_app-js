@@ -124,8 +124,13 @@ pipeline {
     success {
       script {
         try {
-          slackSend(color: 'good', message: "Déploiement réussi : ${env.JOB_NAME} #${env.BUILD_NUMBER}", tokenCredentialId: 'slack-token')
-        } catch (Exception e) { echo "Slack non envoyé" }
+                slackSend(
+                  teamDomain: 'devopsipi',
+                  channel: '##tous-devopsipi',
+                  color: 'danger',
+                  message: "Échec du déploiement : ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                  tokenCredentialId: 'slack-token'
+                ) catch (Exception e) { echo "Slack non envoyé" }
       }
     }
     failure {
