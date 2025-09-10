@@ -102,7 +102,7 @@ pipeline {
     }
 
     stage('Push image') {
-      when { allOf { branch 'main'; expression { return env.REGISTRY_CRED?.trim() } } }
+      when { allOf { branch 'master'; expression { return env.REGISTRY_CRED?.trim() } } }
       steps {
         sh '''
           PREFIX="${REGISTRY_URL:+$REGISTRY_URL/}"
