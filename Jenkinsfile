@@ -32,6 +32,7 @@ pipeline {
         script {
           env.GIT_SHORT = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
           env.IMAGE_TAG = "${env.GIT_SHORT}-${env.BUILD_NUMBER}"
+          echo "IMAGE_TAG (après checkout) = ${env.IMAGE_TAG}"
         }
       }
     }
@@ -50,11 +51,32 @@ pipeline {
     stage('Build image (docker compose)') {
       steps {
         sh '''
+          set -euo pipefail
           docker compose build --pull
+
           SRC_IMAGE="${APP_NAME}"
+
+          # (Re)construire un TAG si vide (fallback sûr)
+          if [ -z "${IMAGE_TAG:-}" ] || [ "${IMAGE_TAG:-}" = "-" ]; then
+            GIT_SHORT_FALLBACK="$(git rev-parse --short HEAD 2>/dev/null || true)"
+            TS="$(date -u +%Y%m%d%H%M%S)"
+            if [ -n "${BUILD_NUMBER:-}" ] && [ -n "$GIT_SHORT_FALLBACK" ]; then
+              IMAGE_TAG="${GIT_SHORT_FALLBACK}-${BUILD_NUMBER}"
+            elif [ -n "${BUILD_NUMBER:-}" ]; then
+              IMAGE_TAG="${BUILD_NUMBER}"
+            else
+              IMAGE_TAG="${TS}"
+            fi
+          fi
+
+          echo "DEBUG -> IMAGE_TAG=${IMAGE_TAG}"
+          echo "DEBUG -> GIT_SHORT=${GIT_SHORT:-<unset>}"
+          echo "DEBUG -> BUILD_NUMBER=${BUILD_NUMBER:-<unset>}"
+
           PREFIX="${REGISTRY_URL:+$REGISTRY_URL/}"
           VERSIONED_TAG="${PREFIX}${IMAGE_REPO}:${IMAGE_TAG}"
           LATEST_TAG="${PREFIX}${IMAGE_REPO}:${IMAGE_LATEST}"
+
           docker tag "$SRC_IMAGE" "$VERSIONED_TAG"
           docker tag "$SRC_IMAGE" "$LATEST_TAG"
         '''
@@ -64,6 +86,7 @@ pipeline {
     stage('Démarrage des services (compose up)') {
       steps {
         sh '''
+          set -euo pipefail
           docker compose up -d
           docker compose ps
         '''
@@ -91,6 +114,7 @@ pipeline {
       steps {
         withCredentials([usernamePassword(credentialsId: env.REGISTRY_CRED, usernameVariable: 'REG_USER', passwordVariable: 'REG_PASS')]) {
           sh '''
+            set -euo pipefail
             if [ -n "${REGISTRY_URL}" ]; then
               echo "$REG_PASS" | docker login "$REGISTRY_URL" -u "$REG_USER" --password-stdin
             else
@@ -102,9 +126,15 @@ pipeline {
     }
 
     stage('Push image') {
-      when { allOf { branch 'master'; expression { return env.REGISTRY_CRED?.trim() } } }
+      when {
+        allOf {
+          branch 'master'
+          expression { return env.REGISTRY_CRED?.trim() }
+        }
+      }
       steps {
         sh '''
+          set -euo pipefail
           PREFIX="${REGISTRY_URL:+$REGISTRY_URL/}"
           VERSIONED_TAG="${PREFIX}${IMAGE_REPO}:${IMAGE_TAG}"
           LATEST_TAG="${PREFIX}${IMAGE_REPO}:${IMAGE_LATEST}"
@@ -124,20 +154,27 @@ pipeline {
     success {
       script {
         try {
-                slackSend(
-                  teamDomain: 'devopsipi',
-                  channel: '##tous-devopsipi',
-                  color: 'danger',
-                  message: "Échec du déploiement : ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-                  tokenCredentialId: 'slack-token'
-                ) catch (Exception e) { echo "Slack non envoyé" }
+          slackSend(
+            teamDomain: 'devopsipi',
+            channel: '#tous-devopsipi',
+            color: 'good',
+            message: "Déploiement réussi : ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+            tokenCredentialId: 'slack-token'
+          )
+        } catch (Exception e) { echo "Slack non envoyé: ${e.message}" }
       }
     }
     failure {
       script {
         try {
-          slackSend(color: 'danger', message: "Échec du déploiement : ${env.JOB_NAME} #${env.BUILD_NUMBER}", tokenCredentialId: 'slack-token')
-        } catch (Exception e) { echo "Slack non envoyé" }
+          slackSend(
+            teamDomain: 'devopsipi',
+            channel: '#tous-devopsipi',
+            color: 'danger',
+            message: "Échec du déploiement : ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+            tokenCredentialId: 'slack-token'
+          )
+        } catch (Exception e) { echo "Slack non envoyé: ${e.message}" }
       }
     }
   }
